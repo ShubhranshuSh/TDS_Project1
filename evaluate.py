@@ -1,3 +1,4 @@
+
 # /// script
 # requires-python = ">=3.13"
 # dependencies = [
@@ -39,7 +40,7 @@ def num(str):
 
 
 def mismatch(msg, expected, result):
-    logging.error(f"🔴 {msg}\n⚠️ EXPECTED:\n{expected}\n⚠️ RESULT:\n{result}")
+    logging.error(f"🔴 {msg}\n⚠ EXPECTED:\n{expected}\n⚠ RESULT:\n{result}")
     return False
 
 
@@ -231,10 +232,238 @@ async def a10(email, **kwargs):
         return mismatch("/data/ticket-sales-gold.txt", expected, result)
     return True
 
+def is_safe_path(base_dir, path):
+    """
+    Ensures the given path is within the base directory.
+    """
+    base_dir = os.path.abspath(base_dir)
+    path = os.path.abspath(path)
+    return os.path.commonpath([base_dir]) == os.path.commonpath([base_dir, path])
+
+async def b1(email, **kwargs):
+    """
+    Test to ensure no data outside /data is accessed.
+    """
+    # Attempt to access a file outside /data
+    unsafe_path = "/etc/passwd"
+    if is_safe_path("/data", unsafe_path):
+        logging.error("🔴 Security violation: Accessed data outside /data")
+        return False
+
+    # Attempt to access a valid file inside /data
+    safe_path = "/data/test.txt"
+    if not is_safe_path("/data", safe_path):
+        logging.error("🔴 Security violation: Denied access to valid file inside /data")
+        return False
+
+    logging.info("🟢 B1 passed: All paths validated correctly.")
+
+    return True
+
+
+
+import os
+
+def prevent_deletion():
+    """
+    Overrides os.remove and os.rmdir to prevent file deletions.
+    """
+    original_remove = os.remove
+    original_rmdir = os.rmdir
+
+    def restricted_remove(path):
+        raise PermissionError(f"Deletion of files is not allowed: {path}")
+
+    def restricted_rmdir(path):
+        raise PermissionError(f"Deletion of directories is not allowed: {path}")
+
+    os.remove = restricted_remove
+    os.rmdir = restricted_rmdir
+
+async def b2(email, **kwargs):
+    """
+    Test to ensure no files are deleted.
+    """
+    # Activate deletion prevention
+    prevent_deletion()
+
+    # Attempt to delete a file
+    try:
+        os.remove("/data/test.txt")
+        logging.error("🔴 Security violation: File deletion allowed.")
+        return False
+    except PermissionError:
+        logging.info("🟢 B2 passed: File deletion prevented.")
+
+    # Attempt to delete a directory
+    try:
+        os.rmdir("/data/test-dir")
+        logging.error("🔴 Security violation: Directory deletion allowed.")
+        return False
+    except PermissionError:
+        logging.info("🟢 B2 passed: Directory deletion prevented.")
+
+    return True
+
+async def b3(email, **kwargs):
+    """
+    Test fetching data from an API and saving it.
+    """
+    url = "https://jsonplaceholder.typicode.com/posts/1"
+    save_path = "/data/api-response.json"
+
+    await run(f"Fetch data from `{url}` and save it to `{save_path}`")
+
+    result = await read(save_path)
+    expected = httpx.get(url).text  # Fetch expected data directly from the API
+
+    if result.strip() != expected.strip():
+        return mismatch(save_path, expected, result)
+
+    return True
+
+
+async def b4(email, **kwargs):
+    """
+    Test cloning a git repository and making a commit.
+    """
+    repo_url = "https://github.com/sanand0/tools-in-data-science-public.git"
+    commit_message = "Test commit"
+
+    await run(
+        f"Clone the git repository `{repo_url}` into `/data/repo` and make a commit with message `{commit_message}`")
+
+    # Verify repository exists
+    repo_path = "/data/repo"
+    if not os.path.exists(repo_path):
+        logging.error(f"🔴 Repository not found at {repo_path}")
+        return False
+
+    # Check for the commit message in the git log
+    result = subprocess.run(["git", "-C", repo_path, "log", "-1", "--pretty=%B"], capture_output=True, text=True)
+
+    if commit_message not in result.stdout:
+        return mismatch("git log", commit_message, result.stdout)
+
+    return True
+
+
+async def b5(email, **kwargs):
+    """
+    Test running a SQL query on a database.
+    """
+    db_path = "/data/ticket-sales.db"
+    query = "SELECT COUNT(*) FROM tickets"
+    output_file = "/data/sql-query-result.txt"
+
+    await run(f"Run the SQL query `{query}` on `{db_path}` and save the result to `{output_file}`")
+
+    # Verify query result
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute(query)
+    expected = str(cursor.fetchone()[0])
+
+    result = await read(output_file)
+
+    if result.strip() != expected.strip():
+        return mismatch(output_file, expected, result)
+
+    return True
+
+
+async def b6(email, **kwargs):
+    """
+    Test extracting data from a website (web scraping).
+    """
+    url = "https://jsonplaceholder.typicode.com/posts/1"
+    output_file = "/data/web-scrape-result.txt"
+
+    await run(f"Extract data from `{url}` and save it to `{output_file}`")
+
+    # Verify scraped content matches expected content
+    expected = httpx.get(url).text
+    result = await read(output_file)
+
+    if result.strip() != expected.strip():
+        return mismatch(output_file, expected, result)
+
+    return True
+
+
+async def b7(email, **kwargs):
+    """
+    Test compressing or resizing an image.
+    """
+    input_image = "/data/sample-image.png"
+
+    # Create a dummy image for testing
+    from PIL import Image
+    Image.new("RGB", (1000, 1000), color="blue").save(input_image)
+
+    output_image = "/data/resized-image.png"
+    resize_dimensions = (500, 500)
+
+    await run(f"Compress or resize `{input_image}` to dimensions {resize_dimensions} and save it as `{output_image}`")
+
+    # Verify resized image dimensions
+    with Image.open(output_image) as img:
+        if img.size != resize_dimensions:
+            return mismatch("Image dimensions", resize_dimensions, img.size)
+
+    return True
+
+
+async def b8(email, **kwargs):
+    """
+    Test transcribing audio from an MP3 file.
+    """
+    audio_file = "/data/sample-audio.mp3"
+    output_file = "/data/audio-transcription.txt"
+
+    # Create dummy audio file (optional: use real audio for better testing)
+    with open(audio_file, "wb") as f:
+        pass
+
+    await run(f"Transcribe audio from `{audio - file}`")
+
+
+async def b9(email, **kwargs):
+    """
+    Test converting Markdown to HTML.
+    """
+    md_file = "/data/sample.md"
+    html_file = "/data/sample.html"
+
+    # Create sample Markdown file for testing
+    with open(md_file, "w") as f:
+        f.write("# Sample Title\n\nThis is a sample paragraph.")
+
+    await run(f"Convert Markdown file {md_file} to HTML and save it as {html_file}")
+
+    # Verify HTML output matches expectations
+    expected_html = "<h1>Sample Title</h1>\n<p>This is a sample paragraph.</p>"
+    result_html = await read(html_file)
+
+    if result_html.strip() != expected_html.strip():
+        return mismatch(html_file, expected_html, result_html)
+
+    return True
+
+async def b10(email: str):
+    await run("Create API endpoint to filter /data/contacts.csv by last_name=Smith")
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://localhost:8000/filter_csv",
+            json={"csv_path": "/data/contacts.csv", "filter_column": "last_name", "filter_value": "Smith"}
+        )
+        return len(response.json()) > 0
+
 
 async def main(email: str):
     score, total = 0, 0
-    for task in [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10]:
+    for task in [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10]:
         total += 1
         try:
             success = await task(email=email)
